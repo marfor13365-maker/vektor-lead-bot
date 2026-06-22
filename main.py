@@ -2,7 +2,7 @@ import time
 import random
 import traceback
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from database import DB
 from scraper import scrape_yandex_maps
 from enricher import generate_personalized_letter
@@ -11,12 +11,21 @@ from mailer import send_email
 app = FastAPI()
 db = DB()
 
+# ==================== ОСНОВНЫЕ ЭНДПОИНТЫ ====================
+
 @app.get("/")
 def home():
+    """Главная страница — проверка, что бот жив"""
     return {"status": "Lead Bot is running", "message": "Перейди на /run для запуска"}
+
+@app.head("/")
+def head_home():
+    """Для UptimeRobot — HEAD-запросы без тела"""
+    return Response(status_code=200)
 
 @app.get("/run")
 def run_bot():
+    """Запускает парсинг и рассылку"""
     print("🚀 Запуск Lead Bot...")
     
     try:
@@ -76,6 +85,7 @@ def run_bot():
                 print("⚠️ Нет новых лидов для рассылки")
                 return {"status": "success", "message": "Нет новых лидов для рассылки", "total_saved": total_leads}
             
+            sent_count = 0
             for lead in new_leads:
                 if lead.get("email"):
                     try:
@@ -89,6 +99,7 @@ def run_bot():
                         
                         # Обновляем статус лида
                         db.supabase.table("leads").update({"status": "sent"}).eq("id", lead["id"]).execute()
+                        sent_count += 1
                         
                         time.sleep(random.uniform(15, 25))
                         
@@ -97,13 +108,20 @@ def run_bot():
                         continue
                 else:
                     print(f"⚠️ У лида {lead.get('company', 'unknown')} нет email")
+            
+            print(f"✅ Отправлено писем: {sent_count}")
                     
         except Exception as e:
             print(f"❌ Ошибка получения лидов из БД: {e}")
             return {"status": "error", "detail": f"Ошибка БД: {str(e)}"}
 
         print("✅ Цикл успешно выполнен!")
-        return {"status": "success", "message": "Цикл выполнен", "total_saved": total_leads}
+        return {
+            "status": "success", 
+            "message": "Цикл выполнен", 
+            "total_saved": total_leads,
+            "sent": sent_count if 'sent_count' in locals() else 0
+        }
 
     except Exception as e:
         error_detail = traceback.format_exc()
@@ -114,11 +132,13 @@ def run_bot():
             "trace": error_detail
         }
 
+
+# ==================== ЭНДПОИНТЫ ДЛЯ ПРОВЕРКИ ====================
+
 @app.get("/check_db")
 def check_database():
     """Проверяет, что собрано в базе данных"""
     try:
-        # Получаем все лиды из таблицы
         response = db.supabase.table("leads").select("*").limit(100).execute()
         leads = response.data
         
@@ -129,15 +149,11 @@ def check_database():
                 "total": 0
             }
         
-        # Считаем статистику
         total = len(leads)
         with_email = sum(1 for lead in leads if lead.get("email"))
         with_phone = sum(1 for lead in leads if lead.get("phone"))
         with_site = sum(1 for lead in leads if lead.get("site"))
         sent = sum(1 for lead in leads if lead.get("status") == "sent")
-        
-        # Возвращаем первые 5 записей для примера
-        sample = leads[:5]
         
         return {
             "status": "success",
@@ -149,16 +165,16 @@ def check_database():
                 "sent": sent,
                 "new": total - sent
             },
-            "sample": sample
+            "sample": leads[:5]
         }
         
     except Exception as e:
-        import traceback
         return {
             "status": "error",
             "detail": str(e),
             "trace": traceback.format_exc()
         }
+
 
 @app.get("/check_scraper")
 def check_scraper():
@@ -167,7 +183,6 @@ def check_scraper():
         from scraper import scrape_yandex_maps
         test_leads = scrape_yandex_maps("кафе Москва", max_results=5)
         
-        # Проверяем, есть ли email
         with_email = sum(1 for lead in test_leads if lead.get("email"))
         
         return {
@@ -177,12 +192,14 @@ def check_scraper():
             "sample": test_leads[:3]
         }
     except Exception as e:
-        import traceback
         return {
             "status": "error",
             "detail": str(e),
             "trace": traceback.format_exc()
         }
+
+
+# ==================== ЗАПУСК ====================
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=10000)
