@@ -3,7 +3,6 @@ playwright
 pandas
 python-dotenv
 pydantic
-smtplib
 beautifulsoup4
 requests
 aiohttp
