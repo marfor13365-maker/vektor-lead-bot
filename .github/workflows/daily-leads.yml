@@ -1,1 +1,32 @@
+name: Daily Lead Bot
 
+on:
+  schedule:
+    - cron: '0 8 * * *'     # Каждый день в 8:00 UTC (можно изменить)
+  workflow_dispatch:        # Можно запускать вручную
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+      
+      - name: Run Lead Bot
+        env:
+          GROK_API_KEY: ${{ secrets.GROK_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          EMAIL: ${{ secrets.EMAIL }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+        run: python main.py
