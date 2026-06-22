@@ -7,3 +7,5 @@ smtplib
 beautifulsoup4
 requests
 aiohttp
+fastapi
+uvicorn[standard]
