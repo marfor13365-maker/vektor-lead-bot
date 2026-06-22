@@ -24,11 +24,16 @@ def run_bot():
             "кафе Москва", 
             "автосервис Санкт-Петербург", 
             "медицинский центр Екатеринбург", 
-            "салон красоты Казань"
+            "салон красоты Казань",
+            "юридическая компания Москва",
+            "IT компания Санкт-Петербург",
+            "строительная компания Москва",
+            "агентство недвижимости Казань"
         ]
 
         # Сбор лидов
         print("📊 Начинаем сбор лидов...")
+        total_leads = 0
         for query in queries:
             print(f"🔍 Парсим: {query}")
             try:
@@ -37,26 +42,39 @@ def run_bot():
                 
                 for lead in leads:
                     try:
+                        # Проверяем, есть ли email
+                        if not lead.get("email"):
+                            print(f"⚠️ У {lead['company']} нет email, пропускаем")
+                            continue
+                            
                         db.save_lead(
                             company=lead["company"], 
                             site=lead.get("site"), 
-                            phone=lead.get("phone")
+                            phone=lead.get("phone"),
+                            email=lead.get("email")
                         )
-                        print(f"💾 Сохранён лид: {lead['company']}")
+                        print(f"💾 Сохранён лид: {lead['company']} ({lead.get('email')})")
+                        total_leads += 1
                     except Exception as e:
                         print(f"❌ Ошибка сохранения лида {lead.get('company', 'unknown')}: {e}")
                     
-                    time.sleep(random.uniform(10, 20))
+                    time.sleep(random.uniform(5, 10))
                     
             except Exception as e:
                 print(f"❌ Ошибка парсинга {query}: {e}")
                 continue
+
+        print(f"📊 Всего сохранено лидов: {total_leads}")
 
         # Рассылка
         print("📧 Начинаем рассылку...")
         try:
             new_leads = db.get_new_leads(limit=20)
             print(f"📬 Найдено {len(new_leads)} новых лидов для рассылки")
+            
+            if len(new_leads) == 0:
+                print("⚠️ Нет новых лидов для рассылки")
+                return {"status": "success", "message": "Нет новых лидов для рассылки", "total_saved": total_leads}
             
             for lead in new_leads:
                 if lead.get("email"):
@@ -69,7 +87,10 @@ def run_bot():
                         send_email(lead["email"], subject, body, lead["company"])
                         print(f"✅ Письмо отправлено для {lead['company']}")
                         
-                        time.sleep(random.uniform(20, 35))
+                        # Обновляем статус лида
+                        db.supabase.table("leads").update({"status": "sent"}).eq("id", lead["id"]).execute()
+                        
+                        time.sleep(random.uniform(15, 25))
                         
                     except Exception as e:
                         print(f"❌ Ошибка при обработке {lead.get('company', 'unknown')}: {e}")
@@ -82,7 +103,7 @@ def run_bot():
             return {"status": "error", "detail": f"Ошибка БД: {str(e)}"}
 
         print("✅ Цикл успешно выполнен!")
-        return {"status": "success", "message": "Цикл выполнен"}
+        return {"status": "success", "message": "Цикл выполнен", "total_saved": total_leads}
 
     except Exception as e:
         error_detail = traceback.format_exc()
@@ -91,6 +112,76 @@ def run_bot():
             "status": "error", 
             "detail": str(e), 
             "trace": error_detail
+        }
+
+@app.get("/check_db")
+def check_database():
+    """Проверяет, что собрано в базе данных"""
+    try:
+        # Получаем все лиды из таблицы
+        response = db.supabase.table("leads").select("*").limit(100).execute()
+        leads = response.data
+        
+        if not leads:
+            return {
+                "status": "empty",
+                "message": "В базе данных нет записей",
+                "total": 0
+            }
+        
+        # Считаем статистику
+        total = len(leads)
+        with_email = sum(1 for lead in leads if lead.get("email"))
+        with_phone = sum(1 for lead in leads if lead.get("phone"))
+        with_site = sum(1 for lead in leads if lead.get("site"))
+        sent = sum(1 for lead in leads if lead.get("status") == "sent")
+        
+        # Возвращаем первые 5 записей для примера
+        sample = leads[:5]
+        
+        return {
+            "status": "success",
+            "total": total,
+            "stats": {
+                "with_email": with_email,
+                "with_phone": with_phone,
+                "with_site": with_site,
+                "sent": sent,
+                "new": total - sent
+            },
+            "sample": sample
+        }
+        
+    except Exception as e:
+        import traceback
+        return {
+            "status": "error",
+            "detail": str(e),
+            "trace": traceback.format_exc()
+        }
+
+@app.get("/check_scraper")
+def check_scraper():
+    """Проверяет парсинг без сохранения в БД"""
+    try:
+        from scraper import scrape_yandex_maps
+        test_leads = scrape_yandex_maps("кафе Москва", max_results=5)
+        
+        # Проверяем, есть ли email
+        with_email = sum(1 for lead in test_leads if lead.get("email"))
+        
+        return {
+            "status": "success",
+            "found": len(test_leads),
+            "with_email": with_email,
+            "sample": test_leads[:3]
+        }
+    except Exception as e:
+        import traceback
+        return {
+            "status": "error",
+            "detail": str(e),
+            "trace": traceback.format_exc()
         }
 
 if __name__ == "__main__":
